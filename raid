@@ -1,0 +1,71 @@
+# Zero the partition tables with
+sudo sgdisk -Z /dev/sda
+sudo sgdisk -Z /dev/sdb
+
+# Create two partitions on each drive; one for EFI and one for the RAID device.
+sudo sgdisk -n 1:0:+512M -t 1:ef00 -c 1:"EFI System" /dev/sda
+sudo sgdisk -n 2:0:0 -t 2:fd00 -c 2:"Linux RAID" /dev/sda
+sudo sgdisk -n 1:0:+512M -t 1:ef00 -c 1:"EFI System" /dev/sdb
+sudo sgdisk -n 2:0:0 -t 2:fd00 -c 2:"Linux RAID" /dev/sdb
+
+# Create a FAT32 system for the EFI partition on the driveS. 
+sudo mkfs.fat -F 32 /dev/sda1
+sudo mkfs.fat -F 32 /dev/sdb1
+
+# Install mdadm
+sudo apt update
+sudo apt install mdadm
+
+# Create the md device. Ignore the warning about the metadata...
+sudo mdadm --create /dev/md0 --bitmap=internal --level=1 --raid-disks=2 /dev/sda2 /dev/sdb2
+
+# Check the status of the md device.
+cat /proc/mdstat 
+## This will go on for a bit. Pay attention to the rsync = xxx% line... When it gets to 100%
+## that line will disappear and it will be don so you can go on...
+
+# Partition the md device
+sudo sgdisk -Z /dev/md0
+sudo sgdisk -n 1:0:0 -t 1:E6D6D379-F507-44C2-A23C-238F2A3DF928 -c 1:"Linux LVM" /dev/md0
+## This creates a single partition /dev/md0p1 on the /dev/md0 device. Ubuntu identidenties 
+## the UUID string as a partition of the LVM partition type.
+
+# Create LVM
+sudo pvcreate /dev/md0p1
+sudo vgcreate vg0 /dev/md0p1
+sudo lvcreate -Z y -L 4GB --name swap vg0
+sudo lvcreate -Z y -l 100%FREE --name root vg0
+
+## Install system... See screen shots...
+## After the install, remember not to exit the LiveCD!!!
+## Do not choose to reboot yet...
+## Select "Continue" to Explore...
+## So that you can contnue setting it up in a terminal.
+
+# Mount installed system to chroot into
+ls /dev/mapper
+sudo mount /dev/mapper/vg0-root /mnt
+cd /mnt
+ls
+sudo mount --bind /dev dev 
+sudo mount --bind /proc proc
+sudo mount --bind /sys sys
+sudo chroot .
+echo "nameserver 1.1.1.1" >> /etc/resolv.conf
+apt update
+apt install mdadm
+cat /etc/mdadm/mdadm.conf
+echo raid1 >> /etc/modules
+update-initramfs -u
+exit
+
+sudo dd if=/dev/sda1 of=/dev/sdb1 bs=4096
+sudo blkid /dev/sd[ab]1
+sudo apt install efibootmgr
+sudo efibootmgr -v
+sudo efibootmgr -c -d /dev/sda -p 1 -L "ubuntu" -l '\EFI\ubuntu\shimx64.efi'
+sudo efibootmgr -c -d /dev/sdb -p 1 -L "ubuntu2" -l '\EFI\ubuntu\shimx64.efi'
+sudo efibootmgr -v
+
+# You are through...
+sudo reboot
